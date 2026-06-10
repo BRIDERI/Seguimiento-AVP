@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Registro de actividad</title>
+  <style>
+    body{font-family:Arial, sans-serif;background:#f5f6f8;margin:0;padding:24px;color:#222}
+    .card{max-width:720px;margin:auto;background:white;border-radius:14px;padding:24px;box-shadow:0 4px 18px rgba(0,0,0,.12)}
+    h2{margin-top:0;color:#003b71}.dato{margin:10px 0}.btn{border:0;border-radius:8px;padding:12px 18px;font-weight:bold;cursor:pointer;margin:6px 8px 6px 0}
+    .ok{background:#1f9d55;color:white}.rep{background:#f2b705;color:#111}.muted{color:#666;font-size:13px}input,textarea{width:100%;padding:10px;margin-top:6px;border:1px solid #ccc;border-radius:8px}
+  </style>
+</head>
+<body>
+<div class="card">
+  {% if a['respondido'] == 1 %}
+    <h2>Respuesta ya registrada</h2>
+    <p>Esta actividad ya fue registrada.</p>
+    <p><b>Estado:</b> {{ a['estado'] }}</p>
+    <p><b>Fecha de respuesta:</b> {{ a['fecha_respuesta'] }}</p>
+  {% else %}
+    <h2>Confirmación de actividad</h2>
+    <div class="dato"><b>ITEM:</b> {{ a['item'] }}</div>
+    <div class="dato"><b>Responsable:</b> {{ a['responsable'] }}</div>
+    <div class="dato"><b>Actividad:</b> {{ a['actividad'] }}</div>
+    <div class="dato"><b>Fecha programada final:</b> {{ a['fecha_programada'] }}</div>
+    <div class="dato"><b>Próximas acciones:</b> {{ a['proximas_acciones'] }}</div>
+    <hr>
+    <form method="post" action="/registrar/{{ a['token'] }}">
+      <input type="hidden" name="canal" value="Link">
+      <button class="btn ok" name="estado" value="Culminado">✅ Culminado</button>
+    </form>
+    <hr>
+    <form method="post" action="/registrar/{{ a['token'] }}">
+      <input type="hidden" name="estado" value="Reprogramar">
+      <input type="hidden" name="canal" value="Link">
+      <label><b>Nueva fecha si desea reprogramar:</b></label>
+      <input type="date" name="nueva_fecha" required>
+      <label><b>Comentario:</b></label>
+      <textarea name="comentario" rows="3" placeholder="Motivo o comentario breve"></textarea>
+      <button class="btn rep" type="submit">🔁 Reprogramar</button>
+    </form>
+    <p class="muted">Solo se acepta una respuesta por actividad.</p>
+  {% endif %}
+</div>
+</body>
+</html>
