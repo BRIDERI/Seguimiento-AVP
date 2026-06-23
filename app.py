@@ -14,6 +14,12 @@ def get_conn():
     return conn
 
 
+def ensure_column(conn, table, column, definition):
+    cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+    if column not in cols:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 def init_db():
     conn = get_conn()
     conn.execute("""
@@ -24,6 +30,7 @@ def init_db():
             grupo TEXT,
             item TEXT,
             responsable TEXT,
+            responsable_nombre TEXT,
             email TEXT,
             telefono TEXT,
             actividad TEXT,
@@ -35,9 +42,13 @@ def init_db():
             canal TEXT,
             fecha_respuesta TEXT,
             nueva_fecha TEXT,
+            avance TEXT,
             comentario TEXT
         )
     """)
+    # Compatibilidad con base antigua ya creada en Render
+    ensure_column(conn, "actividades", "responsable_nombre", "TEXT")
+    ensure_column(conn, "actividades", "avance", "TEXT")
     conn.commit()
     conn.close()
 
@@ -58,10 +69,7 @@ def index():
 @app.route("/r/<token>")
 def ver_actividad(token):
     conn = get_conn()
-    row = conn.execute(
-        "SELECT * FROM actividades WHERE token = ?",
-        (token,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
     conn.close()
 
     if row is None:
@@ -75,17 +83,15 @@ def ver_actividad(token):
 
 @app.route("/registrar/<token>", methods=["POST"])
 def registrar(token):
-    estado = request.form.get("estado")
+    estado = request.form.get("estado") or ""
     canal = request.form.get("canal", "Link")
     nueva_fecha = request.form.get("nueva_fecha") or ""
+    avance = request.form.get("avance") or ""
     comentario = request.form.get("comentario") or ""
     fecha_respuesta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     conn = get_conn()
-    row = conn.execute(
-        "SELECT * FROM actividades WHERE token = ?",
-        (token,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
 
     if row is None:
         conn.close()
@@ -102,17 +108,13 @@ def registrar(token):
             canal = ?,
             fecha_respuesta = ?,
             nueva_fecha = ?,
+            avance = ?,
             comentario = ?
         WHERE token = ?
-    """, (estado, canal, fecha_respuesta, nueva_fecha, comentario, token))
-
+    """, (estado, canal, fecha_respuesta, nueva_fecha, avance, comentario, token))
     conn.commit()
 
-    row = conn.execute(
-        "SELECT * FROM actividades WHERE token = ?",
-        (token,)
-    ).fetchone()
-
+    row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
     conn.close()
     return render_template("registrado.html", a=row)
 
@@ -133,6 +135,7 @@ def api_actividad():
         "grupo": data.get("grupo", ""),
         "item": data.get("item", ""),
         "responsable": data.get("responsable", ""),
+        "responsable_nombre": data.get("responsable_nombre", data.get("responsable", "")),
         "email": data.get("email", ""),
         "telefono": data.get("telefono", ""),
         "actividad": data.get("actividad", ""),
@@ -142,38 +145,34 @@ def api_actividad():
     }
 
     conn = get_conn()
-    existe = conn.execute(
-        "SELECT respondido FROM actividades WHERE token = ?",
-        (token,)
-    ).fetchone()
+    existe = conn.execute("SELECT respondido FROM actividades WHERE token = ?", (token,)).fetchone()
 
     if existe is None:
         conn.execute("""
             INSERT INTO actividades (
-                token, proyecto, hoja, grupo, item, responsable, email, telefono,
-                actividad, fecha_inicio, fecha_programada, proximas_acciones,
-                respondido
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                token, proyecto, hoja, grupo, item, responsable, responsable_nombre,
+                email, telefono, actividad, fecha_inicio, fecha_programada,
+                proximas_acciones, respondido
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         """, (
             token, campos["proyecto"], campos["hoja"], campos["grupo"], campos["item"],
-            campos["responsable"], campos["email"], campos["telefono"], campos["actividad"],
-            campos["fecha_inicio"], campos["fecha_programada"], campos["proximas_acciones"]
+            campos["responsable"], campos["responsable_nombre"], campos["email"], campos["telefono"],
+            campos["actividad"], campos["fecha_inicio"], campos["fecha_programada"], campos["proximas_acciones"]
         ))
         accion = "insertado"
     else:
-        # No borra respuesta existente; solo actualiza datos base si todavía no respondió.
         if existe["respondido"] == 0:
             conn.execute("""
                 UPDATE actividades
                 SET proyecto = ?, hoja = ?, grupo = ?, item = ?, responsable = ?,
-                    email = ?, telefono = ?, actividad = ?, fecha_inicio = ?,
-                    fecha_programada = ?, proximas_acciones = ?
+                    responsable_nombre = ?, email = ?, telefono = ?, actividad = ?,
+                    fecha_inicio = ?, fecha_programada = ?, proximas_acciones = ?
                 WHERE token = ?
             """, (
                 campos["proyecto"], campos["hoja"], campos["grupo"], campos["item"],
-                campos["responsable"], campos["email"], campos["telefono"], campos["actividad"],
-                campos["fecha_inicio"], campos["fecha_programada"], campos["proximas_acciones"],
-                token
+                campos["responsable"], campos["responsable_nombre"], campos["email"], campos["telefono"],
+                campos["actividad"], campos["fecha_inicio"], campos["fecha_programada"],
+                campos["proximas_acciones"], token
             ))
             accion = "actualizado"
         else:
@@ -191,16 +190,16 @@ def api_respuestas():
 
     conn = get_conn()
     rows = conn.execute("""
-        SELECT token, proyecto, hoja, grupo, item, responsable, email, telefono,
-               actividad, fecha_inicio, fecha_programada, proximas_acciones,
-               respondido, estado, canal, fecha_respuesta, nueva_fecha, comentario
+        SELECT token, proyecto, hoja, grupo, item, responsable, responsable_nombre,
+               email, telefono, actividad, fecha_inicio, fecha_programada,
+               proximas_acciones, respondido, estado, canal, fecha_respuesta,
+               nueva_fecha, avance, comentario
         FROM actividades
         ORDER BY fecha_programada, proyecto, grupo, actividad
     """).fetchall()
     conn.close()
 
-    data = [dict(r) for r in rows]
-    return jsonify({"ok": True, "total": len(data), "data": data})
+    return jsonify({"ok": True, "total": len(rows), "data": [dict(r) for r in rows]})
 
 
 if __name__ == "__main__":
