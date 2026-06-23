@@ -9,10 +9,6 @@ DB_PATH = os.environ.get("DB_PATH", "seguimiento.db")
 API_KEY = os.environ.get("API_KEY", "cambiar-esta-clave")
 
 
-# ============================================================
-# BASE DE DATOS
-# ============================================================
-
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -27,7 +23,6 @@ def ensure_column(conn, table, column, definition):
 
 def init_db():
     conn = get_conn()
-
     conn.execute("""
         CREATE TABLE IF NOT EXISTS actividades (
             token TEXT PRIMARY KEY,
@@ -52,11 +47,8 @@ def init_db():
             comentario TEXT
         )
     """)
-
-    # Migración segura si la tabla ya existía antes.
     ensure_column(conn, "actividades", "responsable_nombre", "TEXT")
     ensure_column(conn, "actividades", "avance", "TEXT")
-
     conn.commit()
     conn.close()
 
@@ -68,244 +60,156 @@ def validar_api(req):
     return req.headers.get("X-API-KEY", "") == API_KEY
 
 
-def fecha_hora():
+def ahora_txt():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def valor(row, campo, default=""):
+def v(row, campo, default=""):
     try:
-        v = row[campo]
-        return default if v is None else v
+        valor = row[campo]
+        return default if valor is None else valor
     except Exception:
         return default
 
 
-# ============================================================
-# HTML
-# ============================================================
+def mostrar_nombre(row):
+    return v(row, "responsable_nombre") or v(row, "responsable") or "-"
 
-CSS_BASE = """
+
+CSS = """
 <style>
-    :root {
+    :root{
         --azul:#003B79;
-        --azul2:#005BAA;
+        --azul2:#004C97;
         --gris:#f4f6f8;
-        --borde:#d9e1ea;
+        --borde:#dce3ec;
         --texto:#1f2933;
-        --verde:#1f9d55;
-        --ambar:#f2b600;
+        --verde:#16a05d;
+        --ambar:#f3b400;
     }
-
-    body {
+    body{
         margin:0;
-        background:#f2f4f7;
-        font-family: Arial, Helvetica, sans-serif;
+        background:#f3f5f8;
+        font-family:Arial, Helvetica, sans-serif;
         color:var(--texto);
     }
-
-    .card {
-        max-width:760px;
-        margin:48px auto;
-        background:#fff;
+    .card{
+        max-width:620px;
+        margin:42px auto;
+        background:white;
         border-radius:14px;
-        box-shadow:0 12px 30px rgba(0,0,0,.08);
-        padding:30px 34px;
+        box-shadow:0 10px 26px rgba(0,0,0,.08);
+        padding:26px 30px;
     }
-
-    h1 {
-        color:var(--azul);
-        font-size:24px;
+    h1{
         margin:0 0 4px 0;
-        letter-spacing:.2px;
+        color:var(--azul);
+        font-size:22px;
     }
-
-    .subtitulo {
-        color:#555;
-        font-size:14px;
-        margin-bottom:24px;
+    .sub{
+        font-size:13px;
+        color:#667085;
+        margin-bottom:18px;
     }
-
-    .intro {
-        line-height:1.5;
-        margin-bottom:20px;
+    .intro{
+        font-size:15px;
+        line-height:1.45;
+        margin:0 0 16px 0;
     }
-
-    .tabla {
+    .tabla{
         width:100%;
         border-collapse:collapse;
-        margin:18px 0 24px 0;
+        margin:14px 0 18px 0;
         border:1px solid var(--borde);
         border-radius:10px;
         overflow:hidden;
     }
-
-    .tabla td {
-        padding:12px 14px;
+    .tabla td{
+        padding:10px 12px;
         border-bottom:1px solid var(--borde);
-        vertical-align:top;
         font-size:14px;
+        vertical-align:top;
     }
-
-    .tabla tr:last-child td {
-        border-bottom:none;
-    }
-
-    .label {
-        width:190px;
+    .tabla tr:last-child td{border-bottom:none;}
+    .label{
+        width:155px;
         color:var(--azul);
         font-weight:700;
         background:#fbfcfe;
     }
-
-    .actividad {
+    .actividad{
         color:var(--azul);
         font-weight:700;
         text-transform:uppercase;
-        letter-spacing:.3px;
+        letter-spacing:.2px;
     }
-
-    .acciones {
+    .acciones{
         background:#f5f7fa;
     }
-
-    .bloque-respuesta {
-        text-align:center;
-        margin:22px 0 18px 0;
-    }
-
-    .acciones-botones {
+    .botones{
         display:flex;
-        gap:16px;
+        gap:12px;
+        align-items:center;
+        justify-content:center;
+        margin:18px 0 8px 0;
         flex-wrap:wrap;
-        margin-top:18px;
     }
-
-    button {
+    button{
         border:0;
         border-radius:8px;
-        padding:13px 20px;
+        padding:11px 18px;
         font-weight:700;
         cursor:pointer;
-        font-size:15px;
+        font-size:14px;
     }
-
-    .btn-verde {
-        background:var(--verde);
-        color:white;
-    }
-
-    .btn-ambar {
-        background:var(--ambar);
-        color:#111;
-    }
-
-    .form-reprog {
-        margin-top:24px;
+    .btn-ok{background:var(--verde); color:white;}
+    .btn-toggle{background:var(--ambar); color:#111;}
+    .form-reprog{
+        display:none;
+        margin-top:14px;
         border-top:1px solid var(--borde);
-        padding-top:20px;
+        padding-top:16px;
     }
-
-    input, textarea {
+    .campo{margin-bottom:11px;}
+    label{
+        font-weight:700;
+        font-size:14px;
+    }
+    input, textarea{
         width:100%;
         box-sizing:border-box;
         border:1px solid #cfd8e3;
         border-radius:8px;
-        padding:11px 12px;
+        padding:9px 10px;
         font-size:14px;
-        margin-top:6px;
-        font-family: Arial, Helvetica, sans-serif;
+        margin-top:5px;
+        font-family:Arial, Helvetica, sans-serif;
     }
-
-    textarea {
-        min-height:80px;
-        resize:vertical;
-    }
-
-    .campo {
-        margin-bottom:14px;
-    }
-
-    .nota {
-        color:#56616f;
-        font-size:13px;
-        margin-top:18px;
-    }
-
-    .ok {
-        color:#138a43;
-    }
-
-    .warn {
-        color:#b00020;
-    }
-
-    .footer {
-        margin-top:24px;
+    textarea{min-height:64px; resize:vertical;}
+    .btn-reprog{background:var(--ambar); color:#111;}
+    .nota{
+        margin-top:16px;
+        padding-top:12px;
+        border-top:1px solid #edf0f3;
         font-size:12px;
         color:#667085;
-        border-top:1px solid #e5e7eb;
-        padding-top:14px;
     }
+    .ok{color:#138a43;}
+    .warn{color:#b00020;}
 </style>
 """
 
-TPL_NO_ENCONTRADO = CSS_BASE + """
+TPL_NO_ENCONTRADO = CSS + """
 <div class="card">
     <h1 class="warn">Actividad no encontrada</h1>
-    <p>El enlace no es válido o la actividad ya no existe en la base temporal del sistema.</p>
+    <p>El enlace no es válido o la actividad ya no está cargada en la base temporal del sistema.</p>
 </div>
 """
 
-TPL_YA_REGISTRADO = CSS_BASE + """
-<div class="card">
-    <h1 class="ok">Respuesta ya registrada</h1>
-    <p>Esta actividad ya cuenta con una respuesta registrada.</p>
-
-    <table class="tabla">
-        <tr><td class="label">Responsable</td><td>{{ responsable_nombre }}</td></tr>
-        <tr><td class="label">Actividad</td><td class="actividad">{{ a['actividad'] }}</td></tr>
-        <tr><td class="label">Estado</td><td>{{ a['estado'] }}</td></tr>
-        <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
-        {% if a['nueva_fecha'] %}
-        <tr><td class="label">Nueva fecha</td><td>{{ a['nueva_fecha'] }}</td></tr>
-        {% endif %}
-        {% if a['avance'] %}
-        <tr><td class="label">Avance informado</td><td>{{ a['avance'] }}%</td></tr>
-        {% endif %}
-        {% if a['comentario'] %}
-        <tr><td class="label">Comentario</td><td>{{ a['comentario'] }}</td></tr>
-        {% endif %}
-    </table>
-</div>
-"""
-
-TPL_REGISTRADO = CSS_BASE + """
-<div class="card">
-    <h1 class="ok">Respuesta registrada</h1>
-    <p>Gracias. La respuesta fue registrada correctamente.</p>
-
-    <table class="tabla">
-        <tr><td class="label">Responsable</td><td>{{ responsable_nombre }}</td></tr>
-        <tr><td class="label">Actividad</td><td class="actividad">{{ a['actividad'] }}</td></tr>
-        <tr><td class="label">Estado</td><td>{{ a['estado'] }}</td></tr>
-        <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
-        {% if a['nueva_fecha'] %}
-        <tr><td class="label">Nueva fecha</td><td>{{ a['nueva_fecha'] }}</td></tr>
-        {% endif %}
-        {% if a['avance'] %}
-        <tr><td class="label">Avance informado</td><td>{{ a['avance'] }}%</td></tr>
-        {% endif %}
-        {% if a['comentario'] %}
-        <tr><td class="label">Comentario</td><td>{{ a['comentario'] }}</td></tr>
-        {% endif %}
-    </table>
-</div>
-"""
-
-TPL_ACTIVIDAD = CSS_BASE + """
+TPL_ACTIVIDAD = CSS + """
 <div class="card">
     <h1>Seguimiento de actividad</h1>
-    <div class="subtitulo">Proyecto Anillo Vial Periférico</div>
+    <div class="sub">Proyecto Anillo Vial Periférico</div>
 
     <p class="intro">
         Estimado(a) <b>{{ responsable_nombre }}</b>,<br>
@@ -328,7 +232,7 @@ TPL_ACTIVIDAD = CSS_BASE + """
             <td class="actividad">{{ a['actividad'] }}</td>
         </tr>
         <tr>
-            <td class="label">Fecha programada final</td>
+            <td class="label">Fecha final</td>
             <td>{{ a['fecha_programada'] }}</td>
         </tr>
         {% if a['proximas_acciones'] %}
@@ -340,44 +244,55 @@ TPL_ACTIVIDAD = CSS_BASE + """
     </table>
 
     <form action="/registrar/{{ a['token'] }}" method="POST">
-        <div class="bloque-respuesta">
-            <button class="btn-verde" type="submit" name="estado" value="Culminado">
-                ✓ Culminado
-            </button>
+        <div class="botones">
+            <button class="btn-ok" type="submit" name="estado" value="Culminado">✓ Culminado</button>
+            <button class="btn-toggle" type="button" onclick="document.getElementById('reprog').style.display='block'; this.style.display='none';">↻ Reprogramar</button>
         </div>
 
-        <div class="form-reprog">
+        <div id="reprog" class="form-reprog">
             <div class="campo">
-                <b>Nueva fecha si desea reprogramar:</b>
+                <label>Nueva fecha:</label>
                 <input type="date" name="nueva_fecha">
             </div>
-
             <div class="campo">
-                <b>Porcentaje de avance:</b>
+                <label>Porcentaje de avance:</label>
                 <input type="number" name="avance" min="0" max="100" placeholder="Ejemplo: 80">
             </div>
-
             <div class="campo">
-                <b>Comentario:</b>
+                <label>Comentario:</label>
                 <textarea name="comentario" placeholder="Motivo o comentario breve"></textarea>
             </div>
-
-            <button class="btn-ambar" type="submit" name="estado" value="Reprogramar">
-                ↻ Reprogramar
-            </button>
+            <button class="btn-reprog" type="submit" name="estado" value="Reprogramar">Guardar reprogramación</button>
         </div>
     </form>
 
-    <div class="footer">
-        Solo se acepta una respuesta por actividad.
-    </div>
+    <div class="nota">Solo se acepta una respuesta por actividad.</div>
 </div>
 """
 
+TPL_REGISTRADO = CSS + """
+<div class="card">
+    <h1 class="ok">Respuesta registrada</h1>
+    <div class="sub">Proyecto Anillo Vial Periférico</div>
 
-# ============================================================
-# RUTAS
-# ============================================================
+    <table class="tabla">
+        <tr><td class="label">Responsable</td><td>{{ responsable_nombre }}</td></tr>
+        <tr><td class="label">Actividad</td><td class="actividad">{{ a['actividad'] }}</td></tr>
+        <tr><td class="label">Estado</td><td>{{ a['estado'] }}</td></tr>
+        {% if a['avance'] %}
+        <tr><td class="label">Avance</td><td>{{ a['avance'] }}%</td></tr>
+        {% endif %}
+        {% if a['nueva_fecha'] %}
+        <tr><td class="label">Nueva fecha</td><td>{{ a['nueva_fecha'] }}</td></tr>
+        {% endif %}
+        {% if a['comentario'] %}
+        <tr><td class="label">Comentario</td><td>{{ a['comentario'] }}</td></tr>
+        {% endif %}
+        <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
+    </table>
+</div>
+"""
+
 
 @app.route("/")
 def index():
@@ -393,20 +308,12 @@ def ver_actividad(token):
     if row is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    responsable_nombre = valor(row, "responsable_nombre") or valor(row, "responsable") or "-"
+    responsable_nombre = mostrar_nombre(row)
 
     if row["respondido"] == 1:
-        return render_template_string(
-            TPL_YA_REGISTRADO,
-            a=row,
-            responsable_nombre=responsable_nombre
-        )
+        return render_template_string(TPL_REGISTRADO, a=row, responsable_nombre=responsable_nombre)
 
-    return render_template_string(
-        TPL_ACTIVIDAD,
-        a=row,
-        responsable_nombre=responsable_nombre
-    )
+    return render_template_string(TPL_ACTIVIDAD, a=row, responsable_nombre=responsable_nombre)
 
 
 @app.route("/registrar/<token>", methods=["POST"])
@@ -416,11 +323,11 @@ def registrar(token):
     nueva_fecha = request.form.get("nueva_fecha") or ""
     avance = request.form.get("avance") or ""
     comentario = request.form.get("comentario") or ""
-    fecha_respuesta = fecha_hora()
 
     if estado == "Culminado":
         avance = "100"
         nueva_fecha = ""
+        comentario = comentario or ""
 
     conn = get_conn()
     row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
@@ -430,13 +337,9 @@ def registrar(token):
         return render_template_string(TPL_NO_ENCONTRADO)
 
     if row["respondido"] == 1:
-        responsable_nombre = valor(row, "responsable_nombre") or valor(row, "responsable") or "-"
+        responsable_nombre = mostrar_nombre(row)
         conn.close()
-        return render_template_string(
-            TPL_YA_REGISTRADO,
-            a=row,
-            responsable_nombre=responsable_nombre
-        )
+        return render_template_string(TPL_REGISTRADO, a=row, responsable_nombre=responsable_nombre)
 
     conn.execute("""
         UPDATE actividades
@@ -448,20 +351,13 @@ def registrar(token):
             avance = ?,
             comentario = ?
         WHERE token = ?
-    """, (estado, canal, fecha_respuesta, nueva_fecha, avance, comentario, token))
+    """, (estado, canal, ahora_txt(), nueva_fecha, avance, comentario, token))
 
     conn.commit()
-
     row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
     conn.close()
 
-    responsable_nombre = valor(row, "responsable_nombre") or valor(row, "responsable") or "-"
-
-    return render_template_string(
-        TPL_REGISTRADO,
-        a=row,
-        responsable_nombre=responsable_nombre
-    )
+    return render_template_string(TPL_REGISTRADO, a=row, responsable_nombre=mostrar_nombre(row))
 
 
 @app.route("/api/actividad", methods=["POST"])
@@ -470,7 +366,6 @@ def api_actividad():
         return jsonify({"ok": False, "error": "No autorizado"}), 401
 
     data = request.get_json(force=True)
-
     token = data.get("token")
     if not token:
         return jsonify({"ok": False, "error": "Falta token"}), 400
@@ -501,52 +396,25 @@ def api_actividad():
                 proximas_acciones, respondido
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         """, (
-            token,
-            campos["proyecto"],
-            campos["hoja"],
-            campos["grupo"],
-            campos["item"],
-            campos["responsable"],
-            campos["responsable_nombre"],
-            campos["email"],
-            campos["telefono"],
-            campos["actividad"],
-            campos["fecha_inicio"],
-            campos["fecha_programada"],
-            campos["proximas_acciones"],
+            token, campos["proyecto"], campos["hoja"], campos["grupo"], campos["item"],
+            campos["responsable"], campos["responsable_nombre"], campos["email"],
+            campos["telefono"], campos["actividad"], campos["fecha_inicio"],
+            campos["fecha_programada"], campos["proximas_acciones"]
         ))
         accion = "insertado"
     else:
         if existe["respondido"] == 0:
             conn.execute("""
                 UPDATE actividades
-                SET proyecto = ?,
-                    hoja = ?,
-                    grupo = ?,
-                    item = ?,
-                    responsable = ?,
-                    responsable_nombre = ?,
-                    email = ?,
-                    telefono = ?,
-                    actividad = ?,
-                    fecha_inicio = ?,
-                    fecha_programada = ?,
-                    proximas_acciones = ?
+                SET proyecto = ?, hoja = ?, grupo = ?, item = ?, responsable = ?,
+                    responsable_nombre = ?, email = ?, telefono = ?, actividad = ?,
+                    fecha_inicio = ?, fecha_programada = ?, proximas_acciones = ?
                 WHERE token = ?
             """, (
-                campos["proyecto"],
-                campos["hoja"],
-                campos["grupo"],
-                campos["item"],
-                campos["responsable"],
-                campos["responsable_nombre"],
-                campos["email"],
-                campos["telefono"],
-                campos["actividad"],
-                campos["fecha_inicio"],
-                campos["fecha_programada"],
-                campos["proximas_acciones"],
-                token,
+                campos["proyecto"], campos["hoja"], campos["grupo"], campos["item"],
+                campos["responsable"], campos["responsable_nombre"], campos["email"],
+                campos["telefono"], campos["actividad"], campos["fecha_inicio"],
+                campos["fecha_programada"], campos["proximas_acciones"], token
             ))
             accion = "actualizado"
         else:
@@ -579,4 +447,3 @@ def api_respuestas():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=True)
-
