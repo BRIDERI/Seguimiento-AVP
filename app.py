@@ -18,10 +18,6 @@ GITHUB_ACTIVIDADES_DIR = "data/actividades"
 GITHUB_RESPUESTAS_DIR = "data/respuestas"
 
 
-# ============================================================
-# DB
-# ============================================================
-
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -77,25 +73,26 @@ def ahora_txt():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def dict_row(row):
+def row_to_dict(row):
     return {k: row[k] for k in row.keys()}
 
 
-def valor(row, campo, default=""):
-    try:
-        v = row[campo]
-        return default if v is None else v
-    except Exception:
+def getv(obj, key, default=""):
+    if obj is None:
         return default
+    if isinstance(obj, dict):
+        v = obj.get(key, default)
+    else:
+        try:
+            v = obj[key]
+        except Exception:
+            v = default
+    return default if v is None else v
 
 
-def mostrar_nombre(row):
-    return valor(row, "responsable_nombre") or valor(row, "responsable") or "-"
+def mostrar_nombre(obj):
+    return getv(obj, "responsable_nombre") or getv(obj, "responsable") or "-"
 
-
-# ============================================================
-# GITHUB
-# ============================================================
 
 def github_enabled():
     return bool(GITHUB_TOKEN and GITHUB_OWNER and GITHUB_REPO and GITHUB_BRANCH)
@@ -130,7 +127,7 @@ def gh_get_json(path):
 
 def gh_put_json(path, data, message):
     if not github_enabled():
-        return {"ok": False, "skipped": True}
+        return {"ok": False, "skipped": True, "error": "GitHub no configurado"}
 
     _old, sha = gh_get_json(path)
     content = json.dumps(data, ensure_ascii=False, indent=2)
@@ -148,26 +145,37 @@ def gh_put_json(path, data, message):
     return {"ok": True, "path": path}
 
 
+def path_actividad(token):
+    return f"{GITHUB_ACTIVIDADES_DIR}/{token}.json"
+
+
+def path_respuesta(token):
+    return f"{GITHUB_RESPUESTAS_DIR}/{token}.json"
+
+
 def guardar_actividad_github(data):
     token = data.get("token", "")
     if token:
-        gh_put_json(f"{GITHUB_ACTIVIDADES_DIR}/{token}.json", data, f"Guardar actividad {token}")
+        return gh_put_json(path_actividad(token), data, f"Guardar actividad {token}")
+    return {"ok": False, "error": "sin token"}
 
 
 def guardar_respuesta_github(data):
     token = data.get("token", "")
     if token:
-        gh_put_json(f"{GITHUB_RESPUESTAS_DIR}/{token}.json", data, f"Guardar respuesta {token}")
+        return gh_put_json(path_respuesta(token), data, f"Guardar respuesta {token}")
+    return {"ok": False, "error": "sin token"}
 
 
 def recuperar_actividad_github(token):
-    data, _sha = gh_get_json(f"{GITHUB_ACTIVIDADES_DIR}/{token}.json")
+    data, _sha = gh_get_json(path_actividad(token))
     return data
 
 
-# ============================================================
-# ACTIVIDADES
-# ============================================================
+def recuperar_respuesta_github(token):
+    data, _sha = gh_get_json(path_respuesta(token))
+    return data
+
 
 def insertar_o_actualizar_local(data, conservar_si_respondido=True):
     token = data.get("token")
@@ -229,56 +237,77 @@ def insertar_o_actualizar_local(data, conservar_si_respondido=True):
     return accion
 
 
-def obtener_actividad(token):
+def guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, comentario):
+    conn = get_conn()
+    conn.execute("""
+        UPDATE actividades
+        SET respondido = 1,
+            estado = ?,
+            canal = ?,
+            fecha_respuesta = ?,
+            nueva_fecha = ?,
+            avance = ?,
+            comentario = ?
+        WHERE token = ?
+    """, (estado, canal, ahora_txt(), nueva_fecha, avance, comentario, token))
+    conn.commit()
+    row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
+    conn.close()
+    return row
+
+
+def obtener_local(token):
     conn = get_conn()
     row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
     conn.close()
-
-    if row:
-        return row
-
-    data = recuperar_actividad_github(token)
-    if data:
-        insertar_o_actualizar_local(data, conservar_si_respondido=False)
-        conn = get_conn()
-        row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
-        conn.close()
-        return row
-
-    return None
+    return row
 
 
-# ============================================================
-# HTML
-# ============================================================
+def obtener_actividad_o_respuesta(token):
+    row = obtener_local(token)
+    if row is not None:
+        return row, "local"
+
+    respuesta = recuperar_respuesta_github(token)
+    if respuesta:
+        return respuesta, "github_respuesta"
+
+    actividad = recuperar_actividad_github(token)
+    if actividad:
+        insertar_o_actualizar_local(actividad, conservar_si_respondido=False)
+        row = obtener_local(token)
+        return row, "github_actividad"
+
+    return None, "no_encontrado"
+
 
 CSS = """
 <style>
-    :root{--azul:#003B79;--borde:#dce3ec;--texto:#1f2933;--verde:#16a05d;--ambar:#f3b400;}
-    body{margin:0;background:#f3f5f8;font-family:Arial,Helvetica,sans-serif;color:var(--texto);}
-    .card{max-width:620px;margin:42px auto;background:white;border-radius:14px;box-shadow:0 10px 26px rgba(0,0,0,.08);padding:26px 30px;}
-    h1{margin:0 0 4px 0;color:var(--azul);font-size:22px;}
-    .sub{font-size:13px;color:#667085;margin-bottom:18px;}
-    .intro{font-size:15px;line-height:1.45;margin:0 0 16px 0;}
-    .tabla{width:100%;border-collapse:collapse;margin:14px 0 18px 0;border:1px solid var(--borde);border-radius:10px;overflow:hidden;}
-    .tabla td{padding:10px 12px;border-bottom:1px solid var(--borde);font-size:14px;vertical-align:top;}
-    .tabla tr:last-child td{border-bottom:none;}
-    .label{width:155px;color:var(--azul);font-weight:700;background:#fbfcfe;}
-    .actividad{color:var(--azul);font-weight:700;text-transform:uppercase;letter-spacing:.2px;}
-    .acciones{background:#f5f7fa;}
-    .botones{display:flex;gap:12px;align-items:center;justify-content:center;margin:18px 0 8px 0;flex-wrap:wrap;}
-    button{border:0;border-radius:8px;padding:11px 18px;font-weight:700;cursor:pointer;font-size:14px;}
-    .btn-ok{background:var(--verde);color:white;}
-    .btn-toggle{background:var(--ambar);color:#111;}
-    .form-reprog{display:none;margin-top:14px;border-top:1px solid var(--borde);padding-top:16px;}
-    .campo{margin-bottom:11px;}
-    label{font-weight:700;font-size:14px;}
-    input,textarea{width:100%;box-sizing:border-box;border:1px solid #cfd8e3;border-radius:8px;padding:9px 10px;font-size:14px;margin-top:5px;font-family:Arial,Helvetica,sans-serif;}
-    textarea{min-height:64px;resize:vertical;}
-    .btn-reprog{background:var(--ambar);color:#111;}
-    .nota{margin-top:16px;padding-top:12px;border-top:1px solid #edf0f3;font-size:12px;color:#667085;}
-    .ok{color:#138a43;}
-    .warn{color:#b00020;}
+:root{--azul:#003B79;--borde:#dce3ec;--texto:#1f2933;--verde:#16a05d;--ambar:#f3b400;}
+body{margin:0;background:#f3f5f8;font-family:Arial,Helvetica,sans-serif;color:var(--texto);}
+.card{max-width:620px;margin:42px auto;background:white;border-radius:14px;box-shadow:0 10px 26px rgba(0,0,0,.08);padding:26px 30px;}
+h1{margin:0 0 4px 0;color:var(--azul);font-size:22px;}
+.sub{font-size:13px;color:#667085;margin-bottom:18px;}
+.intro{font-size:15px;line-height:1.45;margin:0 0 16px 0;}
+.tabla{width:100%;border-collapse:collapse;margin:14px 0 18px 0;border:1px solid var(--borde);border-radius:10px;overflow:hidden;}
+.tabla td{padding:10px 12px;border-bottom:1px solid var(--borde);font-size:14px;vertical-align:top;}
+.tabla tr:last-child td{border-bottom:none;}
+.label{width:155px;color:var(--azul);font-weight:700;background:#fbfcfe;}
+.actividad{color:var(--azul);font-weight:700;text-transform:uppercase;letter-spacing:.2px;}
+.acciones{background:#f5f7fa;}
+.botones{display:flex;gap:12px;align-items:center;justify-content:center;margin:18px 0 8px 0;flex-wrap:wrap;}
+button{border:0;border-radius:8px;padding:11px 18px;font-weight:700;cursor:pointer;font-size:14px;}
+.btn-ok{background:var(--verde);color:white;}
+.btn-toggle{background:var(--ambar);color:#111;}
+.form-reprog{display:none;margin-top:14px;border-top:1px solid var(--borde);padding-top:16px;}
+.campo{margin-bottom:11px;}
+label{font-weight:700;font-size:14px;}
+input,textarea{width:100%;box-sizing:border-box;border:1px solid #cfd8e3;border-radius:8px;padding:9px 10px;font-size:14px;margin-top:5px;font-family:Arial,Helvetica,sans-serif;}
+textarea{min-height:64px;resize:vertical;}
+.btn-reprog{background:var(--ambar);color:#111;}
+.nota{margin-top:16px;padding-top:12px;border-top:1px solid #edf0f3;font-size:12px;color:#667085;}
+.ok{color:#138a43;}
+.warn{color:#b00020;}
 </style>
 """
 
@@ -287,7 +316,7 @@ TPL_NO_ENCONTRADO = CSS + """
     <h1 class="warn">Registro no disponible</h1>
     <div class="sub">Proyecto Anillo Vial Periférico</div>
     <p>Esta actividad no está disponible en la base temporal ni en el respaldo GitHub.</p>
-    <p class="nota">Verifique que la actividad haya sido cargada desde el script de seguimiento.</p>
+    <p class="nota">Revise si existen las carpetas <b>data/actividades</b> o <b>data/respuestas</b> en GitHub.</p>
 </div>
 """
 
@@ -332,13 +361,10 @@ TPL_REGISTRADO = CSS + """
         {% if a['comentario'] %}<tr><td class="label">Comentario</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
         <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
     </table>
+    <div class="nota">Esta actividad ya cuenta con respuesta registrada.</div>
 </div>
 """
 
-
-# ============================================================
-# ROUTES
-# ============================================================
 
 @app.route("/")
 def index():
@@ -347,14 +373,14 @@ def index():
 
 @app.route("/r/<token>")
 def ver_actividad(token):
-    row = obtener_actividad(token)
-    if row is None:
+    obj, fuente = obtener_actividad_o_respuesta(token)
+    if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    if row["respondido"] == 1:
-        return render_template_string(TPL_REGISTRADO, a=row, responsable_nombre=mostrar_nombre(row))
+    if getv(obj, "respondido") == 1 or str(getv(obj, "respondido")) == "1":
+        return render_template_string(TPL_REGISTRADO, a=obj, responsable_nombre=mostrar_nombre(obj))
 
-    return render_template_string(TPL_ACTIVIDAD, a=row, responsable_nombre=mostrar_nombre(row))
+    return render_template_string(TPL_ACTIVIDAD, a=obj, responsable_nombre=mostrar_nombre(obj))
 
 
 @app.route("/registrar/<token>", methods=["POST"])
@@ -369,31 +395,22 @@ def registrar(token):
         avance = "100"
         nueva_fecha = ""
 
-    row = obtener_actividad(token)
-    if row is None:
+    obj, fuente = obtener_actividad_o_respuesta(token)
+    if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    if row["respondido"] == 1:
-        return render_template_string(TPL_REGISTRADO, a=row, responsable_nombre=mostrar_nombre(row))
+    if getv(obj, "respondido") == 1 or str(getv(obj, "respondido")) == "1":
+        return render_template_string(TPL_REGISTRADO, a=obj, responsable_nombre=mostrar_nombre(obj))
 
-    conn = get_conn()
-    conn.execute("""
-        UPDATE actividades
-        SET respondido = 1, estado = ?, canal = ?, fecha_respuesta = ?,
-            nueva_fecha = ?, avance = ?, comentario = ?
-        WHERE token = ?
-    """, (estado, canal, ahora_txt(), nueva_fecha, avance, comentario, token))
-    conn.commit()
-    row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
-    conn.close()
+    row = guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, comentario)
+    respuesta = row_to_dict(row)
 
-    respuesta = dict_row(row)
     try:
         guardar_respuesta_github(respuesta)
     except Exception as e:
         print(f"Error guardando respuesta en GitHub: {e}")
 
-    return render_template_string(TPL_REGISTRADO, a=row, responsable_nombre=mostrar_nombre(row))
+    return render_template_string(TPL_REGISTRADO, a=respuesta, responsable_nombre=mostrar_nombre(respuesta))
 
 
 @app.route("/api/actividad", methods=["POST"])
@@ -441,7 +458,29 @@ def api_respuestas():
     """).fetchall()
     conn.close()
 
-    return jsonify({"ok": True, "total": len(rows), "data": [dict_row(r) for r in rows]})
+    return jsonify({"ok": True, "total": len(rows), "data": [row_to_dict(r) for r in rows]})
+
+
+@app.route("/debug/github/<token>")
+def debug_github(token):
+    if not github_enabled():
+        return jsonify({"github_enabled": False, "error": "GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO/GITHUB_BRANCH no configurado"})
+
+    out = {"github_enabled": True, "token": token}
+
+    try:
+        act, _ = gh_get_json(path_actividad(token))
+        out["actividad_en_github"] = act is not None
+    except Exception as e:
+        out["actividad_error"] = str(e)
+
+    try:
+        resp, _ = gh_get_json(path_respuesta(token))
+        out["respuesta_en_github"] = resp is not None
+    except Exception as e:
+        out["respuesta_error"] = str(e)
+
+    return jsonify(out)
 
 
 if __name__ == "__main__":
