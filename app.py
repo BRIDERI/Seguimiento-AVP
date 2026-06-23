@@ -340,7 +340,7 @@ TPL_ACTIVIDAD = CSS + """
         <div id="reprog" class="form-reprog">
             <div class="campo"><label>Nueva fecha:</label><input type="date" name="nueva_fecha"></div>
             <div class="campo"><label>Porcentaje de avance:</label><input type="number" name="avance" min="0" max="100" placeholder="Ejemplo: 80"></div>
-            <div class="campo"><label>Comentario:</label><textarea name="comentario" placeholder="Motivo o comentario breve"></textarea></div>
+            <div class="campo"><label>Próximas acciones:</label><textarea name="comentario" placeholder="Indique las próximas acciones a realizar"></textarea></div>
             <button class="btn-reprog" type="submit" name="estado" value="Reprogramar">Guardar reprogramación</button>
         </div>
     </form>
@@ -358,7 +358,7 @@ TPL_REGISTRADO = CSS + """
         <tr><td class="label">Estado</td><td>{{ a['estado'] }}</td></tr>
         {% if a['avance'] %}<tr><td class="label">Avance</td><td>{{ a['avance'] }}%</td></tr>{% endif %}
         {% if a['nueva_fecha'] %}<tr><td class="label">Nueva fecha</td><td>{{ a['nueva_fecha'] }}</td></tr>{% endif %}
-        {% if a['comentario'] %}<tr><td class="label">Comentario</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
+        {% if a['comentario'] %}<tr><td class="label">Próximas acciones</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
         <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
     </table>
     <div class="nota">Esta actividad ya cuenta con respuesta registrada.</div>
