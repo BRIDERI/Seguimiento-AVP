@@ -39,6 +39,7 @@ def init_db():
             hoja TEXT,
             grupo TEXT,
             item TEXT,
+            id_actividad TEXT,
             responsable TEXT,
             responsable_nombre TEXT,
             email TEXT,
@@ -58,6 +59,7 @@ def init_db():
     """)
     ensure_column(conn, "actividades", "responsable_nombre", "TEXT")
     ensure_column(conn, "actividades", "avance", "TEXT")
+    ensure_column(conn, "actividades", "id_actividad", "TEXT")
     conn.commit()
     conn.close()
 
@@ -92,6 +94,70 @@ def getv(obj, key, default=""):
 
 def mostrar_nombre(obj):
     return getv(obj, "responsable_nombre") or getv(obj, "responsable") or "-"
+
+
+def estado_norm(estado):
+    return str(estado or "").strip().upper()
+
+
+def es_reprogramar(estado):
+    return estado_norm(estado) == "REPROGRAMAR"
+
+
+def es_culminado(estado):
+    return estado_norm(estado) == "CULMINADO"
+
+
+def debe_reemplazar_respuesta(estado_actual, estado_nuevo):
+    """
+    Regla de consolidación menos favorable:
+    - Reprogramar prevalece sobre Culminado.
+    - Culminado NO reemplaza una Reprogramación.
+    - Reprogramar sí reemplaza un Culminado.
+    - Si ambas son Reprogramar, se actualiza conservando el menor avance.
+    """
+    if not estado_actual:
+        return True
+
+    if es_reprogramar(estado_actual) and es_culminado(estado_nuevo):
+        return False
+
+    if es_culminado(estado_actual) and es_reprogramar(estado_nuevo):
+        return True
+
+    if es_reprogramar(estado_actual) and es_reprogramar(estado_nuevo):
+        return True
+
+    if es_culminado(estado_actual) and es_culminado(estado_nuevo):
+        return False
+
+    return True
+
+
+def menor_avance(avance_actual, avance_nuevo):
+    """
+    Para respuestas múltiples en Reprogramar, conserva el menor avance.
+    """
+    def conv(x):
+        try:
+            if x is None or str(x).strip() == "":
+                return None
+            return float(str(x).replace("%", "").replace(",", "."))
+        except Exception:
+            return None
+
+    a = conv(avance_actual)
+    b = conv(avance_nuevo)
+
+    if a is None:
+        return avance_nuevo
+    if b is None:
+        return avance_actual
+
+    menor = min(a, b)
+    if menor.is_integer():
+        return str(int(menor))
+    return str(menor)
 
 
 def github_enabled():
@@ -187,6 +253,7 @@ def insertar_o_actualizar_local(data, conservar_si_respondido=True):
         "hoja": data.get("hoja", ""),
         "grupo": data.get("grupo", ""),
         "item": data.get("item", ""),
+        "id_actividad": data.get("id_actividad", ""),
         "responsable": data.get("responsable", ""),
         "responsable_nombre": data.get("responsable_nombre", "") or data.get("responsable", ""),
         "email": data.get("email", ""),
@@ -203,14 +270,14 @@ def insertar_o_actualizar_local(data, conservar_si_respondido=True):
     if existe is None:
         conn.execute("""
             INSERT INTO actividades (
-                token, proyecto, hoja, grupo, item, responsable, responsable_nombre,
+                token, proyecto, hoja, grupo, item, id_actividad, responsable, responsable_nombre,
                 email, telefono, actividad, fecha_inicio, fecha_programada,
                 proximas_acciones, respondido
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
         """, (
             token, campos["proyecto"], campos["hoja"], campos["grupo"], campos["item"],
-            campos["responsable"], campos["responsable_nombre"], campos["email"],
-            campos["telefono"], campos["actividad"], campos["fecha_inicio"],
+            campos["id_actividad"], campos["responsable"], campos["responsable_nombre"],
+            campos["email"], campos["telefono"], campos["actividad"], campos["fecha_inicio"],
             campos["fecha_programada"], campos["proximas_acciones"]
         ))
         accion = "insertado"
@@ -220,14 +287,14 @@ def insertar_o_actualizar_local(data, conservar_si_respondido=True):
         else:
             conn.execute("""
                 UPDATE actividades
-                SET proyecto = ?, hoja = ?, grupo = ?, item = ?, responsable = ?,
+                SET proyecto = ?, hoja = ?, grupo = ?, item = ?, id_actividad = ?, responsable = ?,
                     responsable_nombre = ?, email = ?, telefono = ?, actividad = ?,
                     fecha_inicio = ?, fecha_programada = ?, proximas_acciones = ?
                 WHERE token = ?
             """, (
                 campos["proyecto"], campos["hoja"], campos["grupo"], campos["item"],
-                campos["responsable"], campos["responsable_nombre"], campos["email"],
-                campos["telefono"], campos["actividad"], campos["fecha_inicio"],
+                campos["id_actividad"], campos["responsable"], campos["responsable_nombre"],
+                campos["email"], campos["telefono"], campos["actividad"], campos["fecha_inicio"],
                 campos["fecha_programada"], campos["proximas_acciones"], token
             ))
             accion = "actualizado"
@@ -237,8 +304,39 @@ def insertar_o_actualizar_local(data, conservar_si_respondido=True):
     return accion
 
 
-def guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, comentario):
+def guardar_respuesta_local(token, estado_nuevo, canal, nueva_fecha, avance_nuevo, status):
+    """
+    Guarda respuesta aplicando la regla de menor favorabilidad.
+    El campo visible se llama STATUS, pero internamente se conserva en 'comentario'
+    para no romper la base anterior ni los JSON existentes.
+    """
     conn = get_conn()
+    row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
+
+    if row is None:
+        conn.close()
+        return None, "no_encontrado"
+
+    estado_actual = row["estado"]
+    respondido_actual = row["respondido"]
+
+    if respondido_actual == 1 and not debe_reemplazar_respuesta(estado_actual, estado_nuevo):
+        conn.close()
+        return row, "mantiene_respuesta_menos_favorable"
+
+    avance_final = avance_nuevo
+    nueva_fecha_final = nueva_fecha
+    status_final = status
+
+    if es_reprogramar(estado_actual) and es_reprogramar(estado_nuevo):
+        avance_final = menor_avance(row["avance"], avance_nuevo)
+
+        if not status_final:
+            status_final = row["comentario"] or ""
+
+        if not nueva_fecha_final:
+            nueva_fecha_final = row["nueva_fecha"] or ""
+
     conn.execute("""
         UPDATE actividades
         SET respondido = 1,
@@ -249,11 +347,12 @@ def guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, comentari
             avance = ?,
             comentario = ?
         WHERE token = ?
-    """, (estado, canal, ahora_txt(), nueva_fecha, avance, comentario, token))
+    """, (estado_nuevo, canal, ahora_txt(), nueva_fecha_final, avance_final, status_final, token))
+
     conn.commit()
     row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
     conn.close()
-    return row
+    return row, "actualizado"
 
 
 def obtener_local(token):
@@ -340,11 +439,11 @@ TPL_ACTIVIDAD = CSS + """
         <div id="reprog" class="form-reprog">
             <div class="campo"><label>Nueva fecha:</label><input type="date" name="nueva_fecha"></div>
             <div class="campo"><label>Porcentaje de avance:</label><input type="number" name="avance" min="0" max="100" placeholder="Ejemplo: 80"></div>
-            <div class="campo"><label>Próximas acciones:</label><textarea name="comentario" placeholder="Indique las próximas acciones a realizar"></textarea></div>
+            <div class="campo"><label>Status:</label><textarea name="comentario" placeholder="Indique el status actual de la actividad"></textarea></div>
             <button class="btn-reprog" type="submit" name="estado" value="Reprogramar">Guardar reprogramación</button>
         </div>
     </form>
-    <div class="nota">Solo se acepta una respuesta por actividad.</div>
+    <div class="nota">Si la actividad tiene más de un responsable, se conservará la respuesta menos favorable.</div>
 </div>
 """
 
@@ -355,13 +454,13 @@ TPL_REGISTRADO = CSS + """
     <table class="tabla">
         <tr><td class="label">Responsable</td><td>{{ responsable_nombre }}</td></tr>
         <tr><td class="label">Actividad</td><td class="actividad">{{ a['actividad'] }}</td></tr>
-        <tr><td class="label">Estado</td><td>{{ a['estado'] }}</td></tr>
+        <tr><td class="label">Estado consolidado</td><td>{{ a['estado'] }}</td></tr>
         {% if a['avance'] %}<tr><td class="label">Avance</td><td>{{ a['avance'] }}%</td></tr>{% endif %}
         {% if a['nueva_fecha'] %}<tr><td class="label">Nueva fecha</td><td>{{ a['nueva_fecha'] }}</td></tr>{% endif %}
-        {% if a['comentario'] %}<tr><td class="label">Próximas acciones</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
+        {% if a['comentario'] %}<tr><td class="label">Status</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
         <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
     </table>
-    <div class="nota">Esta actividad ya cuenta con respuesta registrada.</div>
+    <div class="nota">Esta actividad ya cuenta con respuesta registrada. Si hubo varias respuestas, se muestra la menos favorable.</div>
 </div>
 """
 
@@ -377,9 +476,8 @@ def ver_actividad(token):
     if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    if getv(obj, "respondido") == 1 or str(getv(obj, "respondido")) == "1":
-        return render_template_string(TPL_REGISTRADO, a=obj, responsable_nombre=mostrar_nombre(obj))
-
+    # Se permite volver a abrir el formulario.
+    # Si ya existe respuesta, la regla de consolidación se aplica al registrar.
     return render_template_string(TPL_ACTIVIDAD, a=obj, responsable_nombre=mostrar_nombre(obj))
 
 
@@ -389,7 +487,7 @@ def registrar(token):
     canal = request.form.get("canal", "Link")
     nueva_fecha = request.form.get("nueva_fecha") or ""
     avance = request.form.get("avance") or ""
-    comentario = request.form.get("comentario") or ""
+    status = request.form.get("comentario") or ""
 
     if estado == "Culminado":
         avance = "100"
@@ -399,11 +497,12 @@ def registrar(token):
     if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    if getv(obj, "respondido") == 1 or str(getv(obj, "respondido")) == "1":
-        return render_template_string(TPL_REGISTRADO, a=obj, responsable_nombre=mostrar_nombre(obj))
+    row, accion = guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, status)
 
-    row = guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, comentario)
-    respuesta = row_to_dict(row)
+    if row is None:
+        return render_template_string(TPL_NO_ENCONTRADO)
+
+    respuesta = row_to_dict(row) if not isinstance(row, dict) else row
 
     try:
         guardar_respuesta_github(respuesta)
@@ -449,7 +548,7 @@ def api_respuestas():
 
     conn = get_conn()
     rows = conn.execute("""
-        SELECT token, proyecto, hoja, grupo, item, responsable, responsable_nombre,
+        SELECT token, proyecto, hoja, grupo, item, id_actividad, responsable, responsable_nombre,
                email, telefono, actividad, fecha_inicio, fecha_programada,
                proximas_acciones, respondido, estado, canal, fecha_respuesta,
                nueva_fecha, avance, comentario
