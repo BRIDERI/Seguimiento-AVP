@@ -8,13 +8,13 @@
   "responsable": "TATI+BRENDA",
   "responsable_nombre": "Tatiana Yudith Puicán Chirinos, Brenda Milagros Huaman Guevara",
   "fecha_inicio": "26/06/2026",
-  "fecha_programada_actual": "02/07/2026",
-  "ultima_actualizacion": "2026-07-14 14:54:37",
+  "fecha_programada_actual": "03/07/2026",
+  "ultima_actualizacion": "2026-07-14 15:30:00",
   "respuestas": [
     {
       "token": "AVP-B151CB9151FD",
       "responsable_respuesta": "BRENDA",
-      "responsable_nombre_respuesta": "Tatiana Yudith Puicán Chirinos, Brenda Milagros Huaman Guevara",
+      "responsable_nombre_respuesta": "Brenda Milagros Huaman Guevara",
       "estado": "Reprogramar",
       "canal": "Link",
       "fecha_respuesta": "2026-07-02 15:33:10",
@@ -25,13 +25,35 @@
     {
       "token": "AVP-B151CB9151FD",
       "responsable_respuesta": "TATI",
-      "responsable_nombre_respuesta": "Tatiana Yudith Puicán Chirinos, Brenda Milagros Huaman Guevara",
+      "responsable_nombre_respuesta": "Tatiana Yudith Puicán Chirinos",
       "estado": "Reprogramar",
       "canal": "Link",
       "fecha_respuesta": "2026-07-02 22:31:59",
       "nueva_fecha": "2026-07-03",
       "avance": "50",
       "comentario": "ww"
+    },
+    {
+      "token": "CIERRE-MANUAL-AVP-82862BBD-BRENDA",
+      "responsable_respuesta": "BRENDA",
+      "responsable_nombre_respuesta": "Brenda Milagros Huaman Guevara",
+      "estado": "Culminado",
+      "canal": "Validación de coordinación",
+      "fecha_respuesta": "2026-07-14 15:30:00",
+      "nueva_fecha": "",
+      "avance": "100",
+      "comentario": "Actividad culminada según validación de coordinación."
+    },
+    {
+      "token": "CIERRE-MANUAL-AVP-82862BBD-TATI",
+      "responsable_respuesta": "TATI",
+      "responsable_nombre_respuesta": "Tatiana Yudith Puicán Chirinos",
+      "estado": "Culminado",
+      "canal": "Validación de coordinación",
+      "fecha_respuesta": "2026-07-14 15:31:00",
+      "nueva_fecha": "",
+      "avance": "100",
+      "comentario": "Actividad culminada según validación de coordinación."
     }
   ]
 }
