@@ -1,0 +1,26 @@
+{
+  "id_actividad": "AVP-E0F7E473",
+  "actividad": "Propuesta para el envío de notificaciones.",
+  "proyecto": "I.E. N° 157 JOSE ABELARDO QUIÑONEZ GONZALES",
+  "hoja": "IE 157 CAP FAP",
+  "grupo": "Evaluación estructural preliminar de pabellones comprometidos",
+  "item": "21",
+  "responsable": "BRILLO",
+  "responsable_nombre": "Brigitte Scarlett Del Río Ricce",
+  "fecha_inicio": "22/06/2026",
+  "fecha_programada_actual": "02/07/2026",
+  "ultima_actualizacion": "2026-07-14 14:54:39",
+  "respuestas": [
+    {
+      "token": "AVP-F71496E7B55E",
+      "responsable_respuesta": "BRILLO",
+      "responsable_nombre_respuesta": "Brigitte Scarlett Del Río Ricce",
+      "estado": "Culminado",
+      "canal": "Link",
+      "fecha_respuesta": "2026-07-02 16:25:12",
+      "nueva_fecha": "",
+      "avance": "100",
+      "comentario": ""
+    }
+  ]
+}
