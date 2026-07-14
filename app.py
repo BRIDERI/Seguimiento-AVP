@@ -4,6 +4,16 @@ from datetime import datetime
 import os, json, base64
 import requests
 
+"""
+VERSIÓN HISTORIAL POR ID_ACTIVIDAD
+
+- Las actividades continúan almacenándose por token.
+- Las respuestas se almacenan en un único JSON por ID_ACTIVIDAD.
+- Cada nueva respuesta se agrega a la lista "respuestas".
+- El token queda como referencia histórica del formulario.
+- Soporta varios responsables y varias reprogramaciones sin sobrescribir el historial.
+"""
+
 app = Flask(__name__)
 
 DB_PATH = os.environ.get("DB_PATH", "seguimiento.db")
@@ -215,7 +225,20 @@ def path_actividad(token):
     return f"{GITHUB_ACTIVIDADES_DIR}/{token}.json"
 
 
-def path_respuesta(token):
+def path_respuesta_id(id_actividad):
+    """
+    Nuevo formato: un único archivo por ID_ACTIVIDAD.
+    Ejemplo:
+      data/respuestas/AVP-FC13E21E.json
+    """
+    return f"{GITHUB_RESPUESTAS_DIR}/{id_actividad}.json"
+
+
+def path_respuesta_token_antigua(token):
+    """
+    Compatibilidad temporal con el formato anterior:
+      data/respuestas/AVP-TOKEN.json
+    """
     return f"{GITHUB_RESPUESTAS_DIR}/{token}.json"
 
 
@@ -226,11 +249,137 @@ def guardar_actividad_github(data):
     return {"ok": False, "error": "sin token"}
 
 
-def guardar_respuesta_github(data):
-    token = data.get("token", "")
-    if token:
-        return gh_put_json(path_respuesta(token), data, f"Guardar respuesta {token}")
-    return {"ok": False, "error": "sin token"}
+def crear_historial_base(actividad):
+    return {
+        "id_actividad": actividad.get("id_actividad", ""),
+        "actividad": actividad.get("actividad", ""),
+        "proyecto": actividad.get("proyecto", ""),
+        "hoja": actividad.get("hoja", ""),
+        "grupo": actividad.get("grupo", ""),
+        "item": actividad.get("item", ""),
+        "responsable": actividad.get("responsable", ""),
+        "responsable_nombre": actividad.get("responsable_nombre", ""),
+        "fecha_inicio": actividad.get("fecha_inicio", ""),
+        "fecha_programada_actual": actividad.get("fecha_programada", ""),
+        "ultima_actualizacion": ahora_txt(),
+        "respuestas": [],
+    }
+
+
+def entrada_historial_desde_respuesta(respuesta):
+    """
+    Convierte una respuesta en una entrada inmutable del historial.
+    El token se conserva como referencia del aviso/formulario, pero la identidad
+    permanente es ID_ACTIVIDAD.
+    """
+    return {
+        "token": respuesta.get("token", ""),
+        "responsable_respuesta": respuesta.get("responsable_respuesta", ""),
+        "responsable_nombre_respuesta": respuesta.get("responsable_nombre_respuesta", ""),
+        "estado": respuesta.get("estado", ""),
+        "canal": respuesta.get("canal", "Link"),
+        "fecha_respuesta": respuesta.get("fecha_respuesta", ahora_txt()),
+        "nueva_fecha": respuesta.get("nueva_fecha", ""),
+        "avance": respuesta.get("avance", ""),
+        "comentario": respuesta.get("comentario", ""),
+    }
+
+
+def guardar_respuesta_historial_github(actividad, respuesta, reintentos=4):
+    """
+    Guarda todas las respuestas de una actividad dentro de un solo JSON por ID_ACTIVIDAD.
+
+    La operación se reintenta si GitHub devuelve conflicto 409, lo cual puede ocurrir
+    cuando dos responsables responden casi al mismo tiempo.
+    """
+    id_actividad = str(actividad.get("id_actividad", "") or "").strip()
+    if not id_actividad:
+        return {"ok": False, "error": "sin id_actividad"}
+
+    path = path_respuesta_id(id_actividad)
+    entrada = entrada_historial_desde_respuesta(respuesta)
+
+    ultimo_error = None
+    for intento in range(1, reintentos + 1):
+        try:
+            historial, sha = gh_get_json(path)
+            if not isinstance(historial, dict):
+                historial = crear_historial_base(actividad)
+
+            respuestas = historial.get("respuestas")
+            if not isinstance(respuestas, list):
+                respuestas = []
+
+            # Evita duplicar exactamente el mismo envío por doble clic/recarga.
+            firma_nueva = (
+                str(entrada.get("token", "")),
+                str(entrada.get("responsable_respuesta", "")),
+                str(entrada.get("fecha_respuesta", "")),
+                str(entrada.get("estado", "")),
+                str(entrada.get("avance", "")),
+                str(entrada.get("comentario", "")),
+            )
+            firmas = {
+                (
+                    str(x.get("token", "")),
+                    str(x.get("responsable_respuesta", "")),
+                    str(x.get("fecha_respuesta", "")),
+                    str(x.get("estado", "")),
+                    str(x.get("avance", "")),
+                    str(x.get("comentario", "")),
+                )
+                for x in respuestas if isinstance(x, dict)
+            }
+            if firma_nueva not in firmas:
+                respuestas.append(entrada)
+
+            historial.update({
+                "id_actividad": id_actividad,
+                "actividad": actividad.get("actividad", historial.get("actividad", "")),
+                "proyecto": actividad.get("proyecto", historial.get("proyecto", "")),
+                "hoja": actividad.get("hoja", historial.get("hoja", "")),
+                "grupo": actividad.get("grupo", historial.get("grupo", "")),
+                "item": actividad.get("item", historial.get("item", "")),
+                "responsable": actividad.get("responsable", historial.get("responsable", "")),
+                "responsable_nombre": actividad.get("responsable_nombre", historial.get("responsable_nombre", "")),
+                "fecha_inicio": actividad.get("fecha_inicio", historial.get("fecha_inicio", "")),
+                "fecha_programada_actual": actividad.get("fecha_programada", historial.get("fecha_programada_actual", "")),
+                "ultima_actualizacion": ahora_txt(),
+                "respuestas": respuestas,
+            })
+
+            content = json.dumps(historial, ensure_ascii=False, indent=2)
+            payload = {
+                "message": f"Registrar respuesta de {id_actividad}",
+                "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+                "branch": GITHUB_BRANCH,
+            }
+            if sha:
+                payload["sha"] = sha
+
+            r = requests.put(
+                gh_url(path),
+                headers=gh_headers(),
+                data=json.dumps(payload),
+                timeout=30,
+            )
+
+            if r.status_code == 409 and intento < reintentos:
+                ultimo_error = f"Conflicto GitHub 409, intento {intento}"
+                time.sleep(1.5 * intento)
+                continue
+
+            r.raise_for_status()
+            return {"ok": True, "path": path, "total_respuestas": len(respuestas)}
+
+        except Exception as e:
+            ultimo_error = str(e)
+            if intento < reintentos:
+                time.sleep(1.5 * intento)
+                continue
+            raise
+
+    return {"ok": False, "error": ultimo_error or "No se pudo guardar historial"}
 
 
 def recuperar_actividad_github(token):
@@ -238,8 +387,15 @@ def recuperar_actividad_github(token):
     return data
 
 
-def recuperar_respuesta_github(token):
-    data, _sha = gh_get_json(path_respuesta(token))
+def recuperar_historial_por_id(id_actividad):
+    if not id_actividad:
+        return None
+    data, _sha = gh_get_json(path_respuesta_id(id_actividad))
+    return data
+
+
+def recuperar_respuesta_github_antigua(token):
+    data, _sha = gh_get_json(path_respuesta_token_antigua(token))
     return data
 
 
@@ -367,15 +523,16 @@ def obtener_actividad_o_respuesta(token):
     if row is not None:
         return row, "local"
 
-    respuesta = recuperar_respuesta_github(token)
-    if respuesta:
-        return respuesta, "github_respuesta"
-
     actividad = recuperar_actividad_github(token)
     if actividad:
         insertar_o_actualizar_local(actividad, conservar_si_respondido=False)
         row = obtener_local(token)
         return row, "github_actividad"
+
+    # Compatibilidad con respuestas antiguas guardadas por token.
+    respuesta_antigua = recuperar_respuesta_github_antigua(token)
+    if respuesta_antigua:
+        return respuesta_antigua, "github_respuesta_antigua"
 
     return None, "no_encontrado"
 
@@ -432,6 +589,8 @@ TPL_ACTIVIDAD = CSS + """
         {% if a['proximas_acciones'] %}<tr><td class="label">Próximas acciones</td><td class="acciones">{{ a['proximas_acciones'] }}</td></tr>{% endif %}
     </table>
     <form action="/registrar/{{ a['token'] }}" method="POST">
+        <input type="hidden" name="responsable_respuesta" value="{{ responsable_respuesta }}">
+        <input type="hidden" name="responsable_nombre_respuesta" value="{{ responsable_nombre_respuesta }}">
         <div class="botones">
             <button class="btn-ok" type="submit" name="estado" value="Culminado">✓ Culminado</button>
             <button class="btn-toggle" type="button" onclick="document.getElementById('reprog').style.display='block'; this.style.display='none';">↻ Reprogramar</button>
@@ -443,7 +602,7 @@ TPL_ACTIVIDAD = CSS + """
             <button class="btn-reprog" type="submit" name="estado" value="Reprogramar">Guardar reprogramación</button>
         </div>
     </form>
-    <div class="nota">Si la actividad tiene más de un responsable, se conservará la respuesta menos favorable.</div>
+    <div class="nota">Cada respuesta se guarda en el historial de la actividad y se consolida posteriormente en el cronograma.</div>
 </div>
 """
 
@@ -460,7 +619,7 @@ TPL_REGISTRADO = CSS + """
         {% if a['comentario'] %}<tr><td class="label">Status</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
         <tr><td class="label">Fecha de respuesta</td><td>{{ a['fecha_respuesta'] }}</td></tr>
     </table>
-    <div class="nota">Esta actividad ya cuenta con respuesta registrada. Si hubo varias respuestas, se muestra la menos favorable.</div>
+    <div class="nota">La respuesta fue añadida al historial permanente de la actividad.</div>
 </div>
 """
 
@@ -476,9 +635,18 @@ def ver_actividad(token):
     if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    # Se permite volver a abrir el formulario.
-    # Si ya existe respuesta, la regla de consolidación se aplica al registrar.
-    return render_template_string(TPL_ACTIVIDAD, a=obj, responsable_nombre=mostrar_nombre(obj))
+    codigo_resp = str(request.args.get("resp", "") or "").strip().upper()
+    nombre_resp = mostrar_nombre(obj)
+
+    # El enlace individual enviado por correo incluye ?resp=CODIGO.
+    # Si no existe, se conserva compatibilidad con enlaces antiguos.
+    return render_template_string(
+        TPL_ACTIVIDAD,
+        a=obj,
+        responsable_nombre=nombre_resp,
+        responsable_respuesta=codigo_resp,
+        responsable_nombre_respuesta=nombre_resp,
+    )
 
 
 @app.route("/registrar/<token>", methods=["POST"])
@@ -488,6 +656,8 @@ def registrar(token):
     nueva_fecha = request.form.get("nueva_fecha") or ""
     avance = request.form.get("avance") or ""
     status = request.form.get("comentario") or ""
+    responsable_respuesta = str(request.form.get("responsable_respuesta", "") or "").strip().upper()
+    responsable_nombre_respuesta = str(request.form.get("responsable_nombre_respuesta", "") or "").strip()
 
     if estado == "Culminado":
         avance = "100"
@@ -497,19 +667,66 @@ def registrar(token):
     if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    row, accion = guardar_respuesta_local(token, estado, canal, nueva_fecha, avance, status)
+    actividad = row_to_dict(obj) if not isinstance(obj, dict) else dict(obj)
+
+    # Respaldo para enlaces antiguos que no traían ?resp=CODIGO.
+    if not responsable_respuesta:
+        resp_general = str(actividad.get("responsable", "") or "").strip()
+        if not any(sep in resp_general for sep in ["+", "/", ",", ";", "&"]):
+            responsable_respuesta = resp_general.upper()
+        else:
+            responsable_respuesta = "RESPUESTA"
+
+    fecha_respuesta = ahora_txt()
+
+    respuesta_historial = {
+        "token": token,
+        "id_actividad": actividad.get("id_actividad", ""),
+        "responsable_respuesta": responsable_respuesta,
+        "responsable_nombre_respuesta": responsable_nombre_respuesta,
+        "estado": estado,
+        "canal": canal,
+        "fecha_respuesta": fecha_respuesta,
+        "nueva_fecha": nueva_fecha,
+        "avance": avance,
+        "comentario": status,
+    }
+
+    # Mantiene una copia local para continuidad operativa de Render,
+    # pero GitHub conserva el historial completo y es la fuente auditable.
+    row, accion = guardar_respuesta_local(
+        token, estado, canal, nueva_fecha, avance, status
+    )
 
     if row is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    respuesta = row_to_dict(row) if not isinstance(row, dict) else row
-
     try:
-        guardar_respuesta_github(respuesta)
+        resultado_git = guardar_respuesta_historial_github(
+            actividad, respuesta_historial
+        )
+        print(
+            f"Historial GitHub actualizado: {actividad.get('id_actividad','')} | "
+            f"{responsable_respuesta} | {resultado_git}"
+        )
     except Exception as e:
-        print(f"Error guardando respuesta en GitHub: {e}")
+        print(f"Error guardando historial de respuesta en GitHub: {e}")
 
-    return render_template_string(TPL_REGISTRADO, a=respuesta, responsable_nombre=mostrar_nombre(respuesta))
+    respuesta_mostrar = dict(actividad)
+    respuesta_mostrar.update({
+        "estado": estado,
+        "avance": avance,
+        "nueva_fecha": nueva_fecha,
+        "comentario": status,
+        "fecha_respuesta": fecha_respuesta,
+        "responsable_respuesta": responsable_respuesta,
+    })
+
+    return render_template_string(
+        TPL_REGISTRADO,
+        a=respuesta_mostrar,
+        responsable_nombre=responsable_nombre_respuesta or responsable_respuesta or mostrar_nombre(actividad),
+    )
 
 
 @app.route("/api/actividad", methods=["POST"])
@@ -563,21 +780,44 @@ def api_respuestas():
 @app.route("/debug/github/<token>")
 def debug_github(token):
     if not github_enabled():
-        return jsonify({"github_enabled": False, "error": "GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO/GITHUB_BRANCH no configurado"})
+        return jsonify({
+            "github_enabled": False,
+            "error": "GITHUB_TOKEN/GITHUB_OWNER/GITHUB_REPO/GITHUB_BRANCH no configurado"
+        })
 
     out = {"github_enabled": True, "token": token}
 
+    actividad = None
     try:
-        act, _ = gh_get_json(path_actividad(token))
-        out["actividad_en_github"] = act is not None
+        actividad, _ = gh_get_json(path_actividad(token))
+        out["actividad_en_github"] = actividad is not None
     except Exception as e:
         out["actividad_error"] = str(e)
 
+    id_actividad = ""
+    if isinstance(actividad, dict):
+        id_actividad = str(actividad.get("id_actividad", "") or "").strip()
+    out["id_actividad"] = id_actividad
+
     try:
-        resp, _ = gh_get_json(path_respuesta(token))
-        out["respuesta_en_github"] = resp is not None
+        historial = recuperar_historial_por_id(id_actividad) if id_actividad else None
+        out["respuesta_en_github"] = bool(
+            isinstance(historial, dict) and historial.get("respuestas")
+        )
+        out["historial_en_github"] = historial is not None
+        out["total_respuestas"] = (
+            len(historial.get("respuestas", []))
+            if isinstance(historial, dict) else 0
+        )
     except Exception as e:
         out["respuesta_error"] = str(e)
+
+    # Solo diagnóstico de compatibilidad con archivos antiguos.
+    try:
+        antigua, _ = gh_get_json(path_respuesta_token_antigua(token))
+        out["respuesta_antigua_por_token"] = antigua is not None
+    except Exception as e:
+        out["respuesta_antigua_error"] = str(e)
 
     return jsonify(out)
 
