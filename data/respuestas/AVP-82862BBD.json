@@ -1,0 +1,37 @@
+{
+  "id_actividad": "AVP-82862BBD",
+  "actividad": "Elaboración de la segunda propuesta de reposición.",
+  "proyecto": "I.E. N° 157 JOSE ABELARDO QUIÑONEZ GONZALES",
+  "hoja": "IE 157 CAP FAP",
+  "grupo": "Evaluación estructural preliminar de pabellones comprometidos",
+  "item": "20",
+  "responsable": "TATI+BRENDA",
+  "responsable_nombre": "Tatiana Yudith Puicán Chirinos, Brenda Milagros Huaman Guevara",
+  "fecha_inicio": "26/06/2026",
+  "fecha_programada_actual": "02/07/2026",
+  "ultima_actualizacion": "2026-07-14 14:54:37",
+  "respuestas": [
+    {
+      "token": "AVP-B151CB9151FD",
+      "responsable_respuesta": "BRENDA",
+      "responsable_nombre_respuesta": "Tatiana Yudith Puicán Chirinos, Brenda Milagros Huaman Guevara",
+      "estado": "Reprogramar",
+      "canal": "Link",
+      "fecha_respuesta": "2026-07-02 15:33:10",
+      "nueva_fecha": "2026-07-03",
+      "avance": "80",
+      "comentario": "A la espera de los datos del diseño para la actualización del presupuesto"
+    },
+    {
+      "token": "AVP-B151CB9151FD",
+      "responsable_respuesta": "TATI",
+      "responsable_nombre_respuesta": "Tatiana Yudith Puicán Chirinos, Brenda Milagros Huaman Guevara",
+      "estado": "Reprogramar",
+      "canal": "Link",
+      "fecha_respuesta": "2026-07-02 22:31:59",
+      "nueva_fecha": "2026-07-03",
+      "avance": "50",
+      "comentario": "ww"
+    }
+  ]
+}
