@@ -1,17 +1,19 @@
 from flask import Flask, render_template_string, request, jsonify
 import sqlite3
 from datetime import datetime
-import os, json, base64
+import os, json, base64, re
 import requests
 
 """
-VERSIÓN HISTORIAL POR ID_ACTIVIDAD
+VERSIÓN 1.0 - HISTORIAL POR ID_ACTIVIDAD
 
 - Las actividades continúan almacenándose por token.
 - Las respuestas se almacenan en un único JSON por ID_ACTIVIDAD.
 - Cada nueva respuesta se agrega a la lista "respuestas".
 - El token queda como referencia histórica del formulario.
 - Soporta varios responsables y varias reprogramaciones sin sobrescribir el historial.
+- La respuesta local conserva el último envío recibido; la consolidación oficial se realiza desde el historial GitHub.
+- Valida que el código ?resp= pertenezca realmente a los responsables de la actividad.
 """
 
 app = Flask(__name__)
@@ -104,6 +106,50 @@ def getv(obj, key, default=""):
 
 def mostrar_nombre(obj):
     return getv(obj, "responsable_nombre") or getv(obj, "responsable") or "-"
+
+
+def normalizar_codigo(valor):
+    return str(valor or "").strip().upper()
+
+
+def separar_codigos_responsables(valor):
+    texto = normalizar_codigo(valor)
+    if not texto:
+        return []
+    partes = re.split(r"\+|/|,|;|&|\s+Y\s+", texto)
+    salida = []
+    vistos = set()
+    for parte in partes:
+        codigo = normalizar_codigo(parte)
+        if codigo and codigo not in vistos:
+            salida.append(codigo)
+            vistos.add(codigo)
+    return salida
+
+
+def codigo_responsable_valido(actividad, codigo):
+    codigo = normalizar_codigo(codigo)
+    if not codigo:
+        return False
+    return codigo in separar_codigos_responsables(getv(actividad, "responsable", ""))
+
+
+def nombre_individual_responsable(actividad, codigo):
+    """
+    Intenta emparejar códigos como TATI+BRENDA con los nombres completos
+    guardados como 'Tatiana..., Brenda...'.
+    """
+    codigo = normalizar_codigo(codigo)
+    codigos = separar_codigos_responsables(getv(actividad, "responsable", ""))
+    nombres_txt = str(getv(actividad, "responsable_nombre", "") or "").strip()
+    nombres = [n.strip() for n in re.split(r"\s*[,;]\s*", nombres_txt) if n.strip()]
+
+    if codigo in codigos:
+        idx = codigos.index(codigo)
+        if idx < len(nombres):
+            return nombres[idx]
+
+    return codigo or mostrar_nombre(actividad)
 
 
 def estado_norm(estado):
@@ -462,9 +508,11 @@ def insertar_o_actualizar_local(data, conservar_si_respondido=True):
 
 def guardar_respuesta_local(token, estado_nuevo, canal, nueva_fecha, avance_nuevo, status):
     """
-    Guarda respuesta aplicando la regla de menor favorabilidad.
-    El campo visible se llama STATUS, pero internamente se conserva en 'comentario'
-    para no romper la base anterior ni los JSON existentes.
+    Guarda en SQLite la última respuesta recibida para ese token.
+
+    La regla de negocio definitiva ya no se consolida dentro de SQLite:
+    el historial completo por ID_ACTIVIDAD se guarda en GitHub y los scripts
+    V1 eligen la última respuesta de cada responsable.
     """
     conn = get_conn()
     row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
@@ -472,26 +520,6 @@ def guardar_respuesta_local(token, estado_nuevo, canal, nueva_fecha, avance_nuev
     if row is None:
         conn.close()
         return None, "no_encontrado"
-
-    estado_actual = row["estado"]
-    respondido_actual = row["respondido"]
-
-    if respondido_actual == 1 and not debe_reemplazar_respuesta(estado_actual, estado_nuevo):
-        conn.close()
-        return row, "mantiene_respuesta_menos_favorable"
-
-    avance_final = avance_nuevo
-    nueva_fecha_final = nueva_fecha
-    status_final = status
-
-    if es_reprogramar(estado_actual) and es_reprogramar(estado_nuevo):
-        avance_final = menor_avance(row["avance"], avance_nuevo)
-
-        if not status_final:
-            status_final = row["comentario"] or ""
-
-        if not nueva_fecha_final:
-            nueva_fecha_final = row["nueva_fecha"] or ""
 
     conn.execute("""
         UPDATE actividades
@@ -503,7 +531,15 @@ def guardar_respuesta_local(token, estado_nuevo, canal, nueva_fecha, avance_nuev
             avance = ?,
             comentario = ?
         WHERE token = ?
-    """, (estado_nuevo, canal, ahora_txt(), nueva_fecha_final, avance_final, status_final, token))
+    """, (
+        estado_nuevo,
+        canal,
+        ahora_txt(),
+        nueva_fecha,
+        avance_nuevo,
+        status,
+        token
+    ))
 
     conn.commit()
     row = conn.execute("SELECT * FROM actividades WHERE token = ?", (token,)).fetchone()
@@ -613,7 +649,7 @@ TPL_REGISTRADO = CSS + """
     <table class="tabla">
         <tr><td class="label">Responsable</td><td>{{ responsable_nombre }}</td></tr>
         <tr><td class="label">Actividad</td><td class="actividad">{{ a['actividad'] }}</td></tr>
-        <tr><td class="label">Estado consolidado</td><td>{{ a['estado'] }}</td></tr>
+        <tr><td class="label">Estado registrado</td><td>{{ a['estado'] }}</td></tr>
         {% if a['avance'] %}<tr><td class="label">Avance</td><td>{{ a['avance'] }}%</td></tr>{% endif %}
         {% if a['nueva_fecha'] %}<tr><td class="label">Nueva fecha</td><td>{{ a['nueva_fecha'] }}</td></tr>{% endif %}
         {% if a['comentario'] %}<tr><td class="label">Status</td><td>{{ a['comentario'] }}</td></tr>{% endif %}
@@ -635,11 +671,20 @@ def ver_actividad(token):
     if obj is None:
         return render_template_string(TPL_NO_ENCONTRADO)
 
-    codigo_resp = str(request.args.get("resp", "") or "").strip().upper()
-    nombre_resp = mostrar_nombre(obj)
+    codigo_resp = normalizar_codigo(request.args.get("resp", ""))
 
-    # El enlace individual enviado por correo incluye ?resp=CODIGO.
-    # Si no existe, se conserva compatibilidad con enlaces antiguos.
+    # El código del enlace debe pertenecer a la actividad.
+    if codigo_resp and not codigo_responsable_valido(obj, codigo_resp):
+        return render_template_string(TPL_NO_ENCONTRADO)
+
+    # Compatibilidad con enlaces antiguos de actividades con un solo responsable.
+    if not codigo_resp:
+        codigos = separar_codigos_responsables(getv(obj, "responsable", ""))
+        if len(codigos) == 1:
+            codigo_resp = codigos[0]
+
+    nombre_resp = nombre_individual_responsable(obj, codigo_resp)
+
     return render_template_string(
         TPL_ACTIVIDAD,
         a=obj,
@@ -669,13 +714,19 @@ def registrar(token):
 
     actividad = row_to_dict(obj) if not isinstance(obj, dict) else dict(obj)
 
-    # Respaldo para enlaces antiguos que no traían ?resp=CODIGO.
+    # Respaldo para enlaces antiguos con un solo responsable.
     if not responsable_respuesta:
-        resp_general = str(actividad.get("responsable", "") or "").strip()
-        if not any(sep in resp_general for sep in ["+", "/", ",", ";", "&"]):
-            responsable_respuesta = resp_general.upper()
-        else:
-            responsable_respuesta = "RESPUESTA"
+        codigos = separar_codigos_responsables(actividad.get("responsable", ""))
+        if len(codigos) == 1:
+            responsable_respuesta = codigos[0]
+
+    # No aceptar un código ajeno a los responsables reales de la actividad.
+    if not responsable_respuesta or not codigo_responsable_valido(actividad, responsable_respuesta):
+        return render_template_string(TPL_NO_ENCONTRADO)
+
+    responsable_nombre_respuesta = nombre_individual_responsable(
+        actividad, responsable_respuesta
+    )
 
     fecha_respuesta = ahora_txt()
 
