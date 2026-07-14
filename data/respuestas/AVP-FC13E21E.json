@@ -1,0 +1,37 @@
+{
+  "id_actividad": "AVP-FC13E21E",
+  "actividad": "Prueba 1",
+  "proyecto": "I.E. N° 157 JOSE ABELARDO QUIÑONEZ GONZALES",
+  "hoja": "IE 157 CAP FAP",
+  "grupo": "Actividades Previas",
+  "item": "23",
+  "responsable": "BRILLO",
+  "responsable_nombre": "Brigitte Scarlett Del Río Ricce",
+  "fecha_inicio": "10/07/2026",
+  "fecha_programada_actual": "14/07/2026",
+  "ultima_actualizacion": "2026-07-14 14:54:40",
+  "respuestas": [
+    {
+      "token": "AVP-A02B6EEB41FE",
+      "responsable_respuesta": "BRILLO",
+      "responsable_nombre_respuesta": "Brigitte Scarlett Del Río Ricce",
+      "estado": "Reprogramar",
+      "canal": "Link",
+      "fecha_respuesta": "2026-07-02 21:05:51",
+      "nueva_fecha": "2026-07-03",
+      "avance": "90",
+      "comentario": "Faltan realizar mejoras en los campos de porcentaje."
+    },
+    {
+      "token": "AVP-463EF71112B4",
+      "responsable_respuesta": "BRILLO",
+      "responsable_nombre_respuesta": "Brigitte Scarlett Del Río Ricce",
+      "estado": "Culminado",
+      "canal": "Link",
+      "fecha_respuesta": "2026-07-14 15:45:32",
+      "nueva_fecha": "",
+      "avance": "100",
+      "comentario": ""
+    }
+  ]
+}
